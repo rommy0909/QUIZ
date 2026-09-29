@@ -804,14 +804,19 @@
 
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js';
-    import { getFirestore, collection, collectionGroup, addDoc, getDocs, query, where, serverTimestamp, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js';
-    import { getAuth, setPersistence, browserLocalPersistence, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
+    import { getFirestore, collection, collectionGroup, addDoc, getDocs, query, where, serverTimestamp, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, runTransaction } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js';
+    import { getAuth, setPersistence, browserLocalPersistence, browserSessionPersistence, signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js';
 
     const firebaseConfig = { apiKey:'AIzaSyD1hs252aVS8xRnWe8JM_roc13FuYivtRs', authDomain:'system-773c1.firebaseapp.com', projectId:'system-773c1', storageBucket:'system-773c1.firebasestorage.app', messagingSenderId:'544857235277', appId:'1:544857235277:web:665635b7b126777dd26104', measurementId:'G-5J41YKG9FB' };
     const app = initializeApp(firebaseConfig);
     const db = getFirestore(app);
     const auth = getAuth(app);
-    try { await setPersistence(auth, browserLocalPersistence); } catch (error) { console.warn('Auth persistence unavailable:', error.message); }
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+    } catch (error) {
+      console.warn('Local auth persistence unavailable; using session persistence:', error.message);
+      try { await setPersistence(auth, browserSessionPersistence); } catch (sessionError) { console.warn('Session auth persistence unavailable:', sessionError.message); }
+    }
     const DEMO_MODE = false;
     let state = { quizzes:[], submissions:[], drafts:[], records:[], messages:[] };
     function saveLocalStudentSubmissions() {}
@@ -942,15 +947,17 @@
       await setDoc(doc(db, 'userProfiles', user.uid), { ...profile, updatedAt:serverTimestamp() }, { merge:true });
     }
     async function saveUserRole(user, role) {
-      try { await setDoc(doc(db, 'userProfiles', user.uid), { role, email:user.email || '', updatedAt:serverTimestamp() }, { merge:true }); } catch (error) { console.warn('User role save skipped:', error.message); }
+      try { localStorage.setItem(`quizlab-role-${user.uid}`, role); } catch (error) { console.warn('Cached user role save skipped:', error.message); }
+      try { await setDoc(doc(db, 'userProfiles', user.uid), { role, email:(user.email || '').trim().toLowerCase(), updatedAt:serverTimestamp() }, { merge:true }); } catch (error) { console.warn('User role save skipped:', error.message); }
     }
     async function getUserRole(user) {
       try {
         const snapshot = await getDoc(doc(db, 'userProfiles', user.uid));
-        return snapshot.exists() ? snapshot.data().role || '' : '';
+        const savedRole = snapshot.exists() ? snapshot.data().role || '' : '';
+        return savedRole || cachedUserRole(user);
       } catch (error) {
         console.warn('User role lookup skipped:', error.message);
-        return '';
+        return cachedUserRole(user);
       }
     }
     async function loadUserProfile(user) {
@@ -981,6 +988,24 @@
       $('gatePassword').type = 'password';
       const toggle = document.querySelector('[data-password-target="gatePassword"]');
       if (toggle) toggle.textContent = 'Show';
+    }
+    function cachedUserRole(user) {
+      try { return localStorage.getItem(`quizlab-role-${user.uid}`) || ''; } catch { return ''; }
+    }
+    async function emailHasProfile(email) {
+      const normalizedEmail = clean(email).toLowerCase();
+      if (!normalizedEmail) return false;
+      try {
+        const variants = [...new Set([clean(email), normalizedEmail])];
+        const snapshots = await Promise.all(variants.map(value => getDocs(query(collection(db, 'userProfiles'), where('email', '==', value))).catch(() => null)));
+        return snapshots.some(snapshot => snapshot && !snapshot.empty);
+      } catch (error) {
+        console.warn('Email profile lookup skipped:', error.message);
+        return false;
+      }
+    }
+    function isConnectionError(error) {
+      return !navigator.onLine || ['auth/network-request-failed', 'unavailable', 'deadline-exceeded'].includes(error?.code);
     }
     let currentTeacherEmail = '';
     let currentTeacherCode = '';
@@ -1019,23 +1044,33 @@
       return fallback?.docs.find(item => quizIdentityCode(item.data().quizCode) === quizIdentityCode(code) && (!ownerUid || item.data().ownerUid === ownerUid)) || null;
     }
     async function findQuizParents(code) {
-      const snapshot = await getDocs(collection(db, 'quizData')).catch(() => null);
-      return (snapshot?.docs || []).filter(item => quizIdentityCode(item.data().quizCode) === quizIdentityCode(code));
+      const snapshot = await getDocs(collection(db, 'quizData'));
+      return snapshot.docs.filter(item => quizIdentityCode(item.data().quizCode) === quizIdentityCode(code));
     }
     async function ensureQuizParent(data) {
       const code = clean(data.classCode || data.quizCode);
       const ownerUid = data.ownerUid || data.quizOwnerUid || auth.currentUser?.uid || '';
-      const existing = await findQuizParent(code, data.ownerUid || data.quizOwnerUid || '');
+      const existing = await findQuizParent(code, ownerUid);
       if (existing) return existing.id;
-      const parent = await addDoc(collection(db, 'quizData'), {
-        quizCode:code,
-        ownerUid,
-        title:data.title || data.subject || '',
-        teacherName:data.teacherName || '',
-        createdAt:serverTimestamp(),
-        updatedAt:serverTimestamp()
+      const parents = await findQuizParents(code);
+      if (parents.length) throw new Error('That quiz code is already in use.');
+      const parentRef = doc(db, 'quizData', canonicalQuizCode(code));
+      return runTransaction(db, async transaction => {
+        const snapshot = await transaction.get(parentRef);
+        if (snapshot.exists()) {
+          if (ownerUid && snapshot.data().ownerUid !== ownerUid) throw new Error('That quiz code is already in use.');
+          return snapshot.id;
+        }
+        transaction.set(parentRef, {
+          quizCode:code,
+          ownerUid,
+          title:data.title || data.subject || '',
+          teacherName:data.teacherName || '',
+          createdAt:serverTimestamp(),
+          updatedAt:serverTimestamp()
+        });
+        return parentRef.id;
       });
-      return parent.id;
     }
     async function writeCanonicalQuizRecord(path, data) {
       const quizCode = canonicalQuizCode(data.classCode || data.quizCode);
@@ -1187,8 +1222,10 @@
       await Promise.all(refs.map(ref => deleteDoc(ref).catch(() => null)));
     }
     async function firebaseReplaceQuiz(code, questions) {
+      const quizId = await ensureQuizParent(questions[0] || { classCode:code, title:'', ownerUid:auth.currentUser?.uid || '' });
+      const snapshot = await getDocs(collection(db, 'quizData', quizId, 'questions'));
+      await Promise.all(snapshot.docs.map(item => deleteDoc(item.ref)));
       await deleteNormalizedQuizRecords('quizzes', code);
-      const quizId = await deleteCanonicalQuizQuestions(code) || await ensureQuizParent(questions[0] || { classCode:code, title:'', ownerUid:auth.currentUser?.uid || '' });
       await Promise.all(questions.map(item => firebaseWrite('quizzes', { ...item, quizId })));
     }
     async function loadFirebaseQuizzes(code) {
@@ -1208,8 +1245,24 @@
       if (!normalizedCode || normalizedCode === normalizedExcept) return false;
       if (state.quizzes.some(item => clean(item.classCode).toUpperCase() === normalizedCode)) return true;
       if (DEMO_MODE) return false;
-      const remote = await loadFirebaseQuizzes(code);
-      return remote.length > 0;
+      const parents = await findQuizParents(code);
+      if (parents.length) return true;
+      const variants = [...new Set([clean(code), normalizedCode, formatQuizNumber(code), normalizedCode.replace(/^Q-/, 'Q')].filter(Boolean))];
+      const snapshots = await Promise.all(variants.map(variant => getDocs(query(collection(db, 'quizzes'), where('classCode', '==', variant)))));
+      return snapshots.some(snapshot => snapshot.docs.some(item => quizIdentityCode(item.data().classCode) === quizIdentityCode(code)));
+    }
+    async function generateAvailableQuizCode() {
+      const knownCodes = [...state.quizzes, ...state.drafts].map(item => item.classCode).filter(Boolean);
+      let candidate = ensureQuizCodeInput();
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (!await quizCodeIsUsed(candidate)) {
+          $('classCode').value = candidate;
+          return candidate;
+        }
+        candidate = generateUniqueQuizCode([...knownCodes, candidate]);
+        $('classCode').value = candidate;
+      }
+      throw new Error('Could not generate an unused quiz code.');
     }
     function quizVersionKey(item) {
       return [clean(item.quizNumber || item.quizNo || item.quizNumberDisplay || displayQuizNumber(item)).toUpperCase(), clean(item.title || item.subject).toUpperCase()].join('::');
@@ -2780,7 +2833,7 @@
       }
 
     function createQuestionFromPaste() {
-      const code = ensureQuizCodeInput();
+      let code = ensureQuizCodeInput();
       if (!code) {
         showProfessorNotice('Please fill up Quiz No. first.');
         return;
@@ -2930,8 +2983,11 @@
         alert('Please enter a valid Quiz No. and complete the quiz before publishing.');
         return;
       }
-      if (await quizCodeIsUsed(code)) {
-        alert('That quiz code is already in use. Please use a unique quiz code.');
+      try {
+        code = await generateAvailableQuizCode();
+      } catch (error) {
+        const connectionIssue = !navigator.onLine || ['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(error.code);
+        alert(connectionIssue ? 'Check your internet connection, then try publishing again.' : 'Unable to verify the quiz code. Please try again.');
         return;
       }
 
@@ -2953,11 +3009,17 @@
         endAt
       }));
 
+      try {
+        if (!DEMO_MODE) await firebaseReplaceQuiz(code, publishedQuestions);
+      } catch (error) {
+        const connectionIssue = !navigator.onLine || ['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(error.code);
+        alert(connectionIssue ? 'Check your internet connection, then try publishing again.' : 'Quiz could not be published. Please try again.');
+        return;
+      }
       state.drafts = state.drafts.filter(item => item.classCode !== code);
       state.quizzes = state.quizzes.filter(item => item.classCode !== code);
       state.quizzes.push(...publishedQuestions);
       saveLocal();
-      if (!DEMO_MODE) await firebaseReplaceQuiz(code, publishedQuestions);
 
       questionDrafts = [];
       renderQuestionBatchList();
@@ -3712,8 +3774,51 @@
       $('gateMessage').textContent = '';
       await signOut(auth);
     });
-    $('gateAuthForm').addEventListener('submit', async event => { event.preventDefault(); const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]'); setBusy(button, true, 'Signing in'); try { await signInWithEmailAndPassword(auth, clean($('gateEmail').value), $('gatePassword').value); clearGateAuthFields(); $('gateMessage').textContent = ''; } catch (error) { const messages = { 'auth/operation-not-allowed':'Email/password sign-in is disabled in Firebase Authentication.', 'auth/invalid-credential':'Incorrect email or password.', 'auth/invalid-email':'Enter a valid email address.', 'auth/network-request-failed':'Firebase could not connect. Check your internet connection.' }; $('gateMessage').textContent = messages[error.code] || `Sign-in failed (${error.code || 'unknown error'}).`; } finally { setBusy(button, false); } });
-    $('gateSignUp').addEventListener('click', async () => { try { const credential = await createUserWithEmailAndPassword(auth, clean($('gateEmail').value), $('gatePassword').value); await saveUserRole(credential.user, selectedRole); clearGateAuthFields(); $('gateMessage').textContent = 'Account successfully created. You are now logged in.'; window.alert('Account successfully created. You are now logged in.'); } catch (error) { $('gateMessage').textContent = error.code === 'auth/operation-not-allowed' ? 'Enable Email/Password in Firebase Authentication first.' : 'Account creation failed. Use a valid email and 6+ character password.'; } });
+    $('gateAuthForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+      const email = clean($('gateEmail').value);
+      setBusy(button, true, 'Signing in');
+      try {
+        await signInWithEmailAndPassword(auth, email, $('gatePassword').value);
+        clearGateAuthFields();
+        $('gateMessage').textContent = '';
+      } catch (error) {
+        if (isConnectionError(error)) {
+          $('gateMessage').textContent = 'Check your internet connection, then try logging in again.';
+        } else if (['auth/invalid-credential', 'auth/wrong-password'].includes(error.code)) {
+          $('gateMessage').textContent = await emailHasProfile(email) ? 'Wrong password. Please try again.' : 'Incorrect email or password.';
+        } else {
+          const messages = {
+            'auth/operation-not-allowed':'Email/password sign-in is disabled in Firebase Authentication.',
+            'auth/user-not-found':'No account was found for that email.',
+            'auth/invalid-email':'Enter a valid email address.'
+          };
+          $('gateMessage').textContent = messages[error.code] || `Sign-in failed (${error.code || 'unknown error'}).`;
+        }
+      } finally { setBusy(button, false); }
+    });
+    $('gateSignUp').addEventListener('click', async event => {
+      const button = event.currentTarget;
+      setBusy(button, true, 'Creating account');
+      try {
+        const credential = await createUserWithEmailAndPassword(auth, clean($('gateEmail').value), $('gatePassword').value);
+        await saveUserRole(credential.user, selectedRole);
+        clearGateAuthFields();
+        $('gateMessage').textContent = 'Account successfully created. You are now logged in.';
+        window.alert('Account successfully created. You are now logged in.');
+      } catch (error) {
+        const messages = {
+          'auth/email-already-in-use':'This email is already taken. Please log in or use another email.',
+          'auth/operation-not-allowed':'Enable Email/Password in Firebase Authentication first.',
+          'auth/invalid-email':'Enter a valid email address.',
+          'auth/weak-password':'Use a password with at least 6 characters.'
+        };
+        $('gateMessage').textContent = isConnectionError(error)
+          ? 'Check your internet connection, then try creating your account again.'
+          : messages[error.code] || `Account creation failed (${error.code || 'unknown error'}).`;
+      } finally { setBusy(button, false); }
+    });
     onAuthStateChanged(auth, async user => {
       const signedIn = Boolean(user);
       if (DEMO_MODE) {
