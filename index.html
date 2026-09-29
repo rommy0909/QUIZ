@@ -844,11 +844,11 @@
       button.disabled = busy;
       button.classList.toggle('is-loading', busy);
       if (busy) {
-        button.dataset.originalLabel = button.textContent;
+        button.dataset.originalContent = button.innerHTML;
         if (label) button.textContent = label;
-      } else if (button.dataset.originalLabel) {
-        button.textContent = button.dataset.originalLabel;
-        delete button.dataset.originalLabel;
+      } else if (button.dataset.originalContent) {
+        button.innerHTML = button.dataset.originalContent;
+        delete button.dataset.originalContent;
       }
     }
     const clean = value => String(value || '').trim();
