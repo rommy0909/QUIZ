@@ -2974,7 +2974,7 @@
     }
 
     async function publishFinalQuiz() {
-      const code = ensureQuizCodeInput();
+      let code = ensureQuizCodeInput();
       const title = formatSubject($('quizTitle').value);
       const description = formatSentence($('quizDescription').value);
       const quizNumber = Number($('quizNumber')?.value);
@@ -2983,59 +2983,66 @@
         alert('Please enter a valid Quiz No. and complete the quiz before publishing.');
         return;
       }
+      const publishButton = $('publishFinalQuiz');
+      setBusy(publishButton, true, 'Publishing');
       try {
-        code = await generateAvailableQuizCode();
-      } catch (error) {
-        const connectionIssue = !navigator.onLine || ['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(error.code);
-        alert(connectionIssue ? 'Check your internet connection, then try publishing again.' : 'Unable to verify the quiz code. Please try again.');
-        return;
+        try {
+          code = await generateAvailableQuizCode();
+        } catch (error) {
+          const connectionIssue = !navigator.onLine || ['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(error.code);
+          alert(connectionIssue ? 'Check your internet connection, then try publishing again.' : 'Unable to verify the quiz code. Please try again.');
+          return;
+        }
+
+        const startAt = clean($('quizStartAt')?.value || '');
+        const endAt = clean($('quizEndAt')?.value || '');
+        const duration = Number($('quizDuration')?.value) || 20;
+
+        const publishedQuestions = uniqueQuizQuestions(questionDrafts).map((item, order) => ({
+          ...item,
+          classCode: code,
+          quizNumber,
+          ownerUid: auth.currentUser?.uid || '',
+          teacherName: fullTeacherName(),
+          title,
+          description,
+          duration,
+          order: order + 1,
+          startAt,
+          endAt
+        }));
+
+        try {
+          if (!DEMO_MODE) await firebaseReplaceQuiz(code, publishedQuestions);
+        } catch (error) {
+          const connectionIssue = !navigator.onLine || ['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(error.code);
+          alert(connectionIssue ? 'Check your internet connection, then try publishing again.' : 'Quiz could not be published. Please try again.');
+          return;
+        }
+        state.drafts = state.drafts.filter(item => item.classCode !== code);
+        state.quizzes = state.quizzes.filter(item => item.classCode !== code);
+        state.quizzes.push(...publishedQuestions);
+        saveLocal();
+
+        questionDrafts = [];
+        renderQuestionBatchList();
+        renderFinalReviewList();
+        $('finalQuizReviewSection').classList.add('hidden');
+        $('keyAnswerSection').classList.add('hidden');
+        $('questionPasteInput').value = '';
+        $('professorForm').reset();
+        $('quizSetupFields').classList.remove('hidden');
+        $('showQuestionFields').classList.remove('hidden');
+        $('questionBuilderFields').classList.add('hidden');
+        if ($('quizStatus')) $('quizStatus').textContent = 'PUBLISHED';
+        hideProfessorNotice();
+        showProfessorArea('profDashboard');
+        document.querySelectorAll('#professorNav .nav-btn').forEach(item => item.classList.toggle('active', item.dataset.area === 'profDashboard'));
+        renderProfessor();
+        alert(`Quiz published successfully! Quiz code: ${code}`);
+      } finally {
+        setBusy(publishButton, false);
       }
-
-      const startAt = clean($('quizStartAt')?.value || '');
-      const endAt = clean($('quizEndAt')?.value || '');
-      const duration = Number($('quizDuration')?.value) || 20;
-
-      const publishedQuestions = uniqueQuizQuestions(questionDrafts).map((item, order) => ({
-        ...item,
-        classCode: code,
-        quizNumber,
-        ownerUid: auth.currentUser?.uid || '',
-        teacherName: fullTeacherName(),
-        title,
-        description,
-        duration,
-        order: order + 1,
-        startAt,
-        endAt
-      }));
-
-      try {
-        if (!DEMO_MODE) await firebaseReplaceQuiz(code, publishedQuestions);
-      } catch (error) {
-        const connectionIssue = !navigator.onLine || ['unavailable', 'deadline-exceeded', 'auth/network-request-failed'].includes(error.code);
-        alert(connectionIssue ? 'Check your internet connection, then try publishing again.' : 'Quiz could not be published. Please try again.');
-        return;
-      }
-      state.drafts = state.drafts.filter(item => item.classCode !== code);
-      state.quizzes = state.quizzes.filter(item => item.classCode !== code);
-      state.quizzes.push(...publishedQuestions);
-      saveLocal();
-
-      questionDrafts = [];
-      renderQuestionBatchList();
-      renderFinalReviewList();
-      $('finalQuizReviewSection').classList.add('hidden');
-      $('keyAnswerSection').classList.add('hidden');
-      $('questionPasteInput').value = '';
-      $('professorForm').reset();
-      $('quizSetupFields').classList.remove('hidden');
-      $('showQuestionFields').classList.remove('hidden');
-      $('questionBuilderFields').classList.add('hidden');
-      if ($('quizStatus')) $('quizStatus').textContent = 'PUBLISHED';
-      hideProfessorNotice();
-      showProfessorArea('profDashboard');
-      document.querySelectorAll('#professorNav .nav-btn').forEach(item => item.classList.toggle('active', item.dataset.area === 'profDashboard'));
-      renderProfessor();
     }
 
     let selectedRole = 'professor';
@@ -3606,9 +3613,6 @@
       input.value = '';
       questionDrafts = questionDrafts.map(item => ({ ...item, answer: '', answerLetter: '' }));
       input.focus();
-    });
-    $('keyAnswerList')?.addEventListener('paste', event => {
-      if (event.target.matches('#keyAnswerPaste')) appendPastedText(event);
     });
     $('backToQuestionBuilder')?.addEventListener('click', () => {
       $('keyAnswerSection').classList.add('hidden');
