@@ -194,7 +194,7 @@
     .teacher-message-bear { display:grid; place-items:center; flex:0 0 52px; width:52px; height:52px; border:1px solid #d9958f; border-radius:50%; background:#f3c1aa; box-shadow:0 5px 0 #a85f60,0 8px 16px #12070b55; font-size:30px; transform:rotate(-5deg); }
     .teacher-message-copy h2 { color:#ffe6d7; font-size:clamp(19px,2.2vw,25px); }
     .teacher-message-copy p { margin:5px 0 0; color:#e9c6c4; font-size:13px; line-height:1.5; }
-    .teacher-message textarea { min-height:104px; resize:vertical; border-color:#76505b; background:#241923; border-radius:14px; padding:13px 14px; color:#fff3ed; line-height:1.5; }
+    .teacher-message textarea { min-height:64px; resize:none; border-color:#76505b; background:#241923; border-radius:14px; padding:10px 14px; color:#fff3ed; line-height:1.5; }
     .teacher-message textarea:focus { border-color:#e4a0a8; box-shadow:0 0 0 3px #e4a0a822; }
     .teacher-message .actions { justify-content:flex-end; margin-top:12px; }
     .teacher-message .actions .btn { min-width:132px; }
@@ -313,6 +313,7 @@
     .btn.outline { color:var(--teal); background:transparent; border:1px solid var(--teal); }
     .btn.warning { color:#8b4a14; background:#fff2d8; }
     .notice { padding:11px 13px; background:#eef6f3; color:#35655e; border-radius:8px; font-size:13px; margin-bottom:14px; }
+    .comment-letter-count { display:block; margin:5px 2px 10px; color:var(--muted); font-size:11px; text-align:right; }
     .search-status { margin-top:12px; margin-bottom:0; border:1px solid var(--line); background:#2b1d28; color:var(--ink); }
     .search-status.found { border-color:#4e8c79; background:#1f3b35; color:#d6f7ec; }
     .search-status.not-found { border-color:#8d4652; background:#3a2029; color:#f4c7ca; }
@@ -572,11 +573,11 @@
       .podium-place.third .podium-block { height:52px; }
       .podium-block { font-size:19px; }
       .podium-score { font-size:11px; }
-      .student-comment-rain-item { width:clamp(82px, 26vw, 104px); min-width:0; max-height:none; padding:5px 6px; font-size:8px; line-height:1.25; border-radius:11px; }
+      .student-comment-rain-item { width:clamp(66px, 21vw, 84px); min-width:0; max-height:none; padding:4px 5px; font-size:6.5px; line-height:1.2; border-radius:10px; }
       .student-comment-rain-item span { display:block; white-space:normal; overflow:visible; line-clamp:unset; -webkit-line-clamp:unset; }
       .student-comment-rain-item small { font-size:6px; white-space:normal; overflow:visible; text-overflow:clip; }
       .student-comment-rain-item.left { left:max(var(--rain-x, 3%), 5px); right:auto; }
-      .student-comment-rain-item.right { left:min(var(--rain-x, 65%), calc(100% - clamp(82px, 26vw, 104px) - 5px)); right:auto; }
+      .student-comment-rain-item.right { left:min(var(--rain-x, 65%), calc(100% - clamp(66px, 21vw, 84px) - 5px)); right:auto; }
     }
     @media (max-width:480px) {
       body { font-size:13px; }
@@ -624,11 +625,11 @@
       .teacher-ranking .leaderboard { padding:14px 10px; }
       .leaderboard h3 { font-size:15px; }
       .leaderboard h3::after { font-size:9px; }
-      .student-comment-rain-item { width:clamp(78px, 30vw, 100px); min-width:0; max-height:none; padding:5px; font-size:8px; line-height:1.25; border-radius:10px; }
+      .student-comment-rain-item { width:clamp(60px, 23vw, 78px); min-width:0; max-height:none; padding:4px; font-size:6.5px; line-height:1.2; border-radius:9px; }
       .student-comment-rain-item span { display:block; white-space:normal; overflow:visible; }
       .student-comment-rain-item small { font-size:6px; white-space:normal; overflow:visible; }
       .student-comment-rain-item.left { left:max(var(--rain-x, 2%), 5px); right:auto; }
-      .student-comment-rain-item.right { left:min(var(--rain-x, 64%), calc(100% - clamp(78px, 30vw, 100px) - 5px)); right:auto; }
+      .student-comment-rain-item.right { left:min(var(--rain-x, 64%), calc(100% - clamp(60px, 23vw, 78px) - 5px)); right:auto; }
       .score-circle { width:180px; }
       .score-review .panel-head h2 { font-size:17px; }
       .score-review .panel-head .lead { font-size:11px; }
@@ -650,7 +651,7 @@
       .teacher-message-head { padding-right:22px; }
       .teacher-message-copy h2 { font-size:15px; }
       .teacher-message-copy p { font-size:10px; }
-      .teacher-message textarea { min-height:76px; font-size:11px; }
+      .teacher-message textarea { min-height:58px; font-size:11px; }
       .teacher-message .actions { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:6px; }
       .teacher-message .actions #sendTeacherMessage { width:100%; min-width:0; }
       .teacher-message .actions .heart-button { width:38px; min-width:38px !important; height:34px; min-height:34px; padding:3px 0 !important; font-size:16px !important; }
@@ -1701,14 +1702,35 @@
       return uniqueQuizQuestions(storedQuestions.length ? storedQuestions : groupedQuestions).length;
     }
     function quizGroups() { return visibleQuizGroups(state.quizzes).filter(group => group.status === 'ended'); }
+    function showRecordDownloadStatus(message) {
+      let status = $('recordDownloadStatus');
+      if (!status) {
+        status = document.createElement('div');
+        status.id = 'recordDownloadStatus';
+        status.className = 'notice search-status';
+        status.setAttribute('role', 'status');
+        status.setAttribute('aria-live', 'polite');
+        const cards = $('quizDoneCards');
+        cards?.parentNode.insertBefore(status, cards.nextSibling);
+      }
+      clearTimeout(status.dismissTimer);
+      status.classList.remove('hidden');
+      status.textContent = message;
+      status.dismissTimer = setTimeout(() => {
+        status.classList.add('hidden');
+        status.textContent = '';
+      }, 6000);
+    }
     function renderQuizDoneCards() { const groups = quizGroups(); const viewingStudentPaper = !$('studentPaperView')?.classList.contains('hidden'); const viewingStudentList = !$('quizStudentView')?.classList.contains('hidden'); $('quizDoneCards').className = groups.length && !viewingStudentPaper && !viewingStudentList ? 'quiz-cards' : 'hidden'; $('quizDoneEmpty').classList.toggle('hidden', Boolean(groups.length)); $('quizDoneCards').innerHTML = groups.map((group,index) => { const submissions = state.submissions.filter(item => group.codes.includes(item.classCode)); const questionCount = quizQuestionCount(group); return `<article class="done-card" data-quiz-code="${escapeHtml(group.code)}"><div class="card-actions"><button class="icon-btn icon-edit done-edit" title="Edit quiz schedule" aria-label="Edit quiz" data-code="${escapeHtml(group.code)}" type="button">&#9998;</button><button class="icon-btn delete icon-delete done-delete" title="Delete quiz" aria-label="Delete quiz" data-code="${escapeHtml(group.code)}" type="button">&#128465;</button></div><span class="number-badge">ENDED</span><h3>Quiz ${String(index + 1).padStart(2,'0')} · ${escapeHtml(formatSubject(group.title))}</h3><p><strong>Teacher:</strong> ${escapeHtml(formatPersonName(group.teacherName || 'Teacher'))}</p><p><strong>Subject:</strong> ${escapeHtml(formatSubject(group.title))}</p><p><strong>Quiz No.:</strong> ${escapeHtml(displayQuizNumber(group))}</p><p><strong>Schedule:</strong> ${group.startAt && group.endAt ? `${formatDate(group.startAt)} - ${formatDate(group.endAt)}` : 'Schedule not set'}</p><p><strong>Questions:</strong> ${questionCount}</p><div class="card-footer"><button class="takers-count" data-code="${escapeHtml(group.code)}" type="button">${submissions.length} TAKERS</button><button class="ranking-btn" data-code="${escapeHtml(group.code)}" type="button">View ranking</button><button class="btn outline export-results" data-code="${escapeHtml(group.code)}" type="button">Download Record Document</button><button class="btn outline retake-quiz" data-code="${escapeHtml(group.code)}" type="button">Retake</button></div></article>`; }).join(''); }
     function updateQuizRecords(code, changes) { state.quizzes = state.quizzes.map(item => item.classCode === code ? { ...item, ...changes } : item); saveLocal(); }
-    function exportQuizResults(code) {
+    function exportQuizResults(code, button) {
       const isPhone = navigator.userAgentData?.mobile || /iPhone|iPod|Android.*Mobile|Windows Phone/i.test(navigator.userAgent);
       if (!('download' in HTMLAnchorElement.prototype) || typeof URL.createObjectURL !== 'function') {
-        alert(isPhone
+        const message = isPhone
           ? 'Your phone browser cannot download this document. Please try again on a laptop.'
-          : 'Your browser cannot download this document. Please try another browser.');
+          : 'Your browser cannot download this document. Please try another browser.';
+        showRecordDownloadStatus(message);
+        alert(message);
         return;
       }
       const group = quizGroups().find(item => item.codes.includes(code)) || visibleQuizGroups(state.quizzes).find(item => item.codes.includes(code));
@@ -1725,8 +1747,36 @@
       const documentUrl = URL.createObjectURL(new Blob([documentHtml], { type:'application/msword' }));
       link.href = documentUrl;
       link.download = `${(displayQuizNumber(quiz) || code || 'quiz').replace(/[^a-z0-9_-]+/gi, '_')}-student-record.doc`;
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(documentUrl), 60000);
+      const originalLabel = button?.textContent || 'Download Record Document';
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Downloading...';
+        button.setAttribute('aria-busy', 'true');
+      }
+      showRecordDownloadStatus('Preparing your record document...');
+      requestAnimationFrame(() => {
+        try {
+          link.click();
+          showRecordDownloadStatus(isPhone
+            ? 'Download started. Check your Downloads. If the file does not appear, your phone browser may not support this document. Please try on a laptop.'
+            : 'Download started. Check your Downloads folder.');
+          setTimeout(() => URL.revokeObjectURL(documentUrl), 60000);
+        } catch {
+          URL.revokeObjectURL(documentUrl);
+          const message = isPhone
+            ? 'Your phone could not start this download. Please try again on a laptop.'
+            : 'Your browser could not start this download. Please try another browser.';
+          showRecordDownloadStatus(message);
+          alert(message);
+        } finally {
+          setTimeout(() => {
+            if (!button) return;
+            button.disabled = false;
+            button.textContent = originalLabel;
+            button.removeAttribute('aria-busy');
+          }, 1200);
+        }
+      });
     }
     function renderProfessorDashboardLegacy() { const groups = [...new Map(state.quizzes.map(normalizeQuiz).map(item => [item.classCode, item])).values()]; $('professorQuizCards').className = groups.length ? '' : 'empty'; $('professorQuizCards').innerHTML = groups.length ? groups.map((quiz,index) => `<article class="dashboard-quiz-card"><span class="tag">${escapeHtml(quiz.status).toUpperCase()}</span><h3>Quiz ${String(index + 1).padStart(2,'0')} · ${escapeHtml(quiz.title)}</h3><p><strong>Subject:</strong> ${escapeHtml(quiz.classCode)} · <strong>Time:</strong> ${quiz.duration} minutes</p><p><strong>Questions:</strong> ${quizQuestionCount(quiz)}</p></article>`).join('') : 'No quizzes created yet.'; }
     function renderQuizPreviewQuestion() {
@@ -2433,6 +2483,7 @@
       ranking.querySelector('#sendProfessorComment').onclick = async event => {
         const input = ranking.querySelector('#teacherRankingCommentInput');
         const status = ranking.querySelector('#teacherRankingCommentStatus');
+        limitCommentCharacters(input);
         const message = clean(input.value);
         if (!message) { status.textContent = 'Please write a message first.'; input.focus(); return; }
         const button = event.currentTarget;
@@ -2516,6 +2567,7 @@
       ranking.querySelector('#sendProfessorComment').onclick = async event => {
         const input = ranking.querySelector('#teacherRankingCommentInput');
         const status = ranking.querySelector('#teacherRankingCommentStatus');
+        limitCommentCharacters(input);
         const message = clean(input.value);
         if (!message) { status.textContent = 'Please write a message first.'; input.focus(); return; }
         const button = event.currentTarget;
@@ -3523,6 +3575,41 @@
       heartButton.textContent = '♥';
       commentActions.appendChild(heartButton);
     }
+    function limitCommentCharacters(input) {
+      const maxCharacters = 30;
+      input.removeAttribute('maxlength');
+      const originalValue = input.value;
+      const cursor = input.selectionStart ?? originalValue.length;
+      let characterCount = 0;
+      let limitedValue = '';
+      for (const character of originalValue) {
+        if (character !== ' ') {
+          if (characterCount >= maxCharacters) continue;
+          characterCount += 1;
+        }
+        limitedValue += character;
+      }
+      if (limitedValue !== originalValue) {
+        input.value = limitedValue;
+        const nextCursor = Math.min(cursor, limitedValue.length);
+        input.setSelectionRange(nextCursor, nextCursor);
+      }
+      let counter = input.nextElementSibling;
+      if (!counter?.classList.contains('comment-letter-count')) {
+        counter = document.createElement('small');
+        counter.className = 'comment-letter-count';
+        counter.setAttribute('aria-live', 'polite');
+        input.insertAdjacentElement('afterend', counter);
+      }
+      counter.textContent = `${characterCount} / ${maxCharacters} characters`;
+      return characterCount;
+    }
+    document.addEventListener('focusin', event => {
+      if (event.target.matches('#teacherMessageInput, #teacherRankingCommentInput')) limitCommentCharacters(event.target);
+    });
+    document.addEventListener('input', event => {
+      if (event.target.matches('#teacherMessageInput, #teacherRankingCommentInput')) limitCommentCharacters(event.target);
+    });
     const saveStudentReaction = async (message = '', heart = false, button = null) => {
       const status = $('teacherMessageStatus');
       const activeCode = clean(selectedStudentLeaderboardCode || currentCommentSubmission?.classCode || currentStudent?.classCode || '').toUpperCase();
@@ -3552,10 +3639,12 @@
       const input = $('teacherMessageInput');
       const status = $('teacherMessageStatus');
       const button = $('sendTeacherMessage');
+      limitCommentCharacters(input);
       const message = clean(input.value);
       if (!message) { status.textContent = 'Please write a message first.'; input.focus(); return; }
       await saveStudentReaction(message, false, button);
       input.value = '';
+      limitCommentCharacters(input);
     });
     $('sendStudentHeart')?.addEventListener('click', () => saveStudentReaction('', true, $('sendStudentHeart')));
     (() => {
@@ -3717,7 +3806,7 @@
     });
     $('professorForm').addEventListener('submit', professorSubmit); $('classCode').addEventListener('input', renderProfessor);
 
-    $('quizDoneCards')?.addEventListener('click', async event => { const edit = event.target.closest('.done-edit'); const remove = event.target.closest('.done-delete'); const retake = event.target.closest('.retake-quiz'); const ranking = event.target.closest('.ranking-btn'); const exportBtn = event.target.closest('.export-results'); if (remove) { event.stopPropagation(); const code = remove.dataset.code; if (!window.confirm('Delete this quiz and all of its questions and results? This action cannot be undone.')) return; const group = quizGroups().find(item => item.codes.includes(code)); const codes = group?.codes || [code]; state.quizzes = state.quizzes.filter(item => !codes.includes(item.classCode)); state.submissions = state.submissions.filter(item => !codes.includes(item.classCode)); state.drafts = state.drafts.filter(item => !codes.includes(item.classCode)); if (!DEMO_MODE) await Promise.all(codes.map(item => deleteQuizData(item))); saveLocal(); renderProfessor(); return; } if (ranking) { event.stopPropagation(); showTeacherRanking(ranking.dataset.code); return; } if (exportBtn) { event.stopPropagation(); exportQuizResults(exportBtn.dataset.code); return; } if (retake) { event.stopPropagation(); openRetakeWorkspace(retake.dataset.code); return; } if (edit) { event.stopPropagation(); openQuizEditor(edit.dataset.code); return; } const card = event.target.closest('[data-quiz-code]'); if (card) showQuizStudents(card.dataset.quizCode); });
+    $('quizDoneCards')?.addEventListener('click', async event => { const edit = event.target.closest('.done-edit'); const remove = event.target.closest('.done-delete'); const retake = event.target.closest('.retake-quiz'); const ranking = event.target.closest('.ranking-btn'); const exportBtn = event.target.closest('.export-results'); if (remove) { event.stopPropagation(); const code = remove.dataset.code; if (!window.confirm('Delete this quiz and all of its questions and results? This action cannot be undone.')) return; const group = quizGroups().find(item => item.codes.includes(code)); const codes = group?.codes || [code]; state.quizzes = state.quizzes.filter(item => !codes.includes(item.classCode)); state.submissions = state.submissions.filter(item => !codes.includes(item.classCode)); state.drafts = state.drafts.filter(item => !codes.includes(item.classCode)); if (!DEMO_MODE) await Promise.all(codes.map(item => deleteQuizData(item))); saveLocal(); renderProfessor(); return; } if (ranking) { event.stopPropagation(); showTeacherRanking(ranking.dataset.code); return; } if (exportBtn) { event.stopPropagation(); exportQuizResults(exportBtn.dataset.code, exportBtn); return; } if (retake) { event.stopPropagation(); openRetakeWorkspace(retake.dataset.code); return; } if (edit) { event.stopPropagation(); openQuizEditor(edit.dataset.code); return; } const card = event.target.closest('[data-quiz-code]'); if (card) showQuizStudents(card.dataset.quizCode); });
     $('quizStudentList')?.addEventListener('click', event => { const row = event.target.closest('[data-record-index]'); if (row) showStudentPaper(currentResultsQuizCode, row.dataset.recordIndex); });
     $('backToQuizCards')?.addEventListener('click', () => { $('quizStudentView').classList.add('hidden'); $('studentPaperView').classList.add('hidden'); renderQuizDoneCards(); });
     $('backToStudentList')?.addEventListener('click', () => { $('studentPaperView').classList.add('hidden'); $('quizStudentView').classList.remove('hidden'); });
