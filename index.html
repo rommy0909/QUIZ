@@ -986,12 +986,15 @@
         return {};
       }
     }
-    async function validateSignedInRole(user) {
-      const requestedRole = selectedRole === 'student' ? 'student' : 'professor';
+    async function validateSignedInRole(user, requestedRole = selectedRole) {
       const savedRole = await getUserRole(user);
       if (savedRole && savedRole !== requestedRole) {
-        selectedRole = savedRole;
+        selectedRole = requestedRole;
         syncGateRoleLabel();
+        roleMismatchMessage = 'No account exists for the selected role. Choose the role you used when creating your account.';
+        pendingAuthRole = '';
+        await signOut(auth);
+        return false;
       }
       if (!savedRole) await saveUserRole(user, requestedRole);
       selectedRole = savedRole || selectedRole || requestedRole;
@@ -1717,16 +1720,16 @@
       return uniqueQuizQuestions(storedQuestions.length ? storedQuestions : groupedQuestions).length;
     }
     function quizGroups() { return visibleQuizGroups(state.quizzes).filter(group => group.status === 'ended'); }
-    function showRecordDownloadStatus(message) {
-      let status = $('recordDownloadStatus');
+    function showRecordDownloadStatus(message, button) {
+      const card = button?.closest('.done-card');
+      if (!card) return;
+      let status = card.querySelector('.record-download-status');
       if (!status) {
         status = document.createElement('div');
-        status.id = 'recordDownloadStatus';
-        status.className = 'notice search-status';
+        status.className = 'notice search-status record-download-status';
         status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite');
-        const cards = $('quizDoneCards');
-        cards?.parentNode.insertBefore(status, cards.nextSibling);
+        card.append(status);
       }
       clearTimeout(status.dismissTimer);
       status.classList.remove('hidden');
@@ -1744,7 +1747,7 @@
         const message = isPhone
           ? 'Your phone browser cannot download this document. Please try again on a laptop.'
           : 'Your browser cannot download this document. Please try another browser.';
-        showRecordDownloadStatus(message);
+        showRecordDownloadStatus(message, button);
         alert(message);
         return;
       }
@@ -1757,7 +1760,7 @@
       const schedule = quiz.startAt && quiz.endAt ? `${formatDate(quiz.startAt)} - ${formatDate(quiz.endAt)}` : 'Schedule not set';
       const actualQuestionCount = quizQuestionCount(quiz) || Number(rows[0]?.total) || 0;
       const tableRows = rows.length ? rows.map((item, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(formatPersonName(item.studentName))}</td><td>${escapeHtml(item.course || '')}</td><td><strong>${item.score ?? 0} / ${item.total ?? 0}</strong></td><td>${result(item)}</td><td>${escapeHtml(formatDate(item.submittedAt))}</td></tr>`).join('') : '<tr><td colspan="6" style="text-align:center">No student records submitted.</td></tr>';
-      const documentHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quiz Record - ${escapeHtml(displayQuizNumber(quiz) || code)}</title><style>@page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#20242b;max-width:1100px;margin:0 auto;padding:28px 34px;font-size:13px}h1{font-size:27px;margin:0 0 7px;color:#243447}h2{font-size:17px;margin:30px 0 11px;color:#243447;border-bottom:2px solid #243447;padding-bottom:7px}.subtitle{color:#66717d;margin:0 0 25px;font-size:12px}.details{width:100%;border-collapse:collapse;margin-bottom:30px;table-layout:fixed}.details td{border:1px solid #d8dde3;padding:10px 12px;font-size:13px;line-height:1.35}.details td:nth-child(odd){background:#f3f5f7;font-weight:bold;width:15%}.records{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}.records th{background:#243447;color:white;text-align:left;padding:10px 9px}.records th:nth-child(1){width:7%}.records th:nth-child(2){width:28%}.records th:nth-child(3){width:20%}.records th:nth-child(4){width:12%}.records th:nth-child(5){width:15%}.records th:nth-child(6){width:18%}.records td{border:1px solid #d8dde3;padding:9px;line-height:1.35}.records tr:nth-child(even){background:#f8fafb}.footer{margin-top:30px;color:#7a838d;font-size:10px}</style></head><body><h1>Student Quiz Performance Record</h1><p class="subtitle">Official class record generated from QuizLab</p><table class="details"><tr><td>Teacher</td><td>${escapeHtml(teacher)}</td><td>Subject</td><td>${escapeHtml(subject)}</td></tr><tr><td>Quiz No.</td><td>${escapeHtml(displayQuizNumber(quiz) || code)}</td><td>Class Code</td><td>${escapeHtml(code)}</td></tr><tr><td>Schedule</td><td>${escapeHtml(schedule)}</td><td>Duration</td><td>${quiz.duration || 20} minutes</td></tr><tr><td>Total Questions</td><td>${actualQuestionCount}</td><td>Total Students</td><td>${rows.length}</td></tr></table><h2>Student Records</h2><table class="records"><thead><tr><th>No.</th><th>Student</th><th>Course / Year</th><th>Score</th><th>Result</th><th>Date and Time Taken</th></tr></thead><tbody>${tableRows}</tbody></table><p class="footer">Generated on ${escapeHtml(formatDate(new Date()))}</p></body></html>`;
+      const documentHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Quiz Record - ${escapeHtml(displayQuizNumber(quiz) || code)}</title><style>@page{size:A4;margin:18mm}body{font-family:Arial,sans-serif;color:#20242b;max-width:1100px;margin:0 auto;padding:28px 34px;font-size:13px}h1{font-size:27px;margin:0 0 7px;color:#243447}h2{font-size:17px;margin:30px 0 11px;color:#243447;border-bottom:2px solid #243447;padding-bottom:7px}.subtitle{color:#66717d;margin:0 0 25px;font-size:12px}.details{width:100%;border-collapse:collapse;margin-bottom:30px;table-layout:fixed}.details td{border:1px solid #d8dde3;padding:10px 12px;font-size:13px;line-height:1.35}.details td:nth-child(odd){background:#f3f5f7;font-weight:bold;width:15%}.records{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}.records th{background:#243447;color:white;text-align:left;padding:10px 9px}.records th:nth-child(1){width:7%}.records th:nth-child(2){width:28%}.records th:nth-child(3){width:20%}.records th:nth-child(4){width:12%}.records th:nth-child(5){width:15%}.records th:nth-child(6){width:18%}.records td{border:1px solid #d8dde3;padding:9px;line-height:1.35}.records tr:nth-child(even){background:#f8fafb}.footer{margin-top:30px;color:#7a838d;font-size:10px}</style></head><body><h1>Student Quiz Performance Record</h1><p class="subtitle">Official class record generated from QuizLab</p><table class="details"><tr><td>Teacher</td><td>${escapeHtml(teacher)}</td><td>Subject</td><td>${escapeHtml(subject)}</td></tr><tr><td>Quiz No.</td><td>${escapeHtml(displayQuizNumber(quiz) || code)}</td><td>Class Code</td><td>${escapeHtml(code)}</td></tr><tr><td>Schedule</td><td>${escapeHtml(schedule)}</td><td>Duration</td><td>${quiz.duration || 20} minutes</td></tr><tr><td>Total Questions</td><td>${actualQuestionCount}</td><td>Total Students</td><td>${rows.length}</td></tr></table><h2>Student Records</h2><table class="records"><thead><tr><th>No.</th><th>Student</th><th>Course / Year</th><th>Score</th><th>Result</th><th>Date and Time Taken</th></tr></thead><tbody>${tableRows}</tbody></table><p class="footer">Generated on ${escapeHtml(formatDate(new Date()))}</p><\/body></html>`;
       const link = document.createElement('a');
       const documentUrl = URL.createObjectURL(new Blob([documentHtml], { type:'application/msword' }));
       link.href = documentUrl;
@@ -1768,20 +1771,20 @@
         button.textContent = 'Downloading...';
         button.setAttribute('aria-busy', 'true');
       }
-      showRecordDownloadStatus('Preparing your record document...');
+      showRecordDownloadStatus('Preparing your record document...', button);
       requestAnimationFrame(() => {
         try {
           link.click();
           showRecordDownloadStatus(isPhone
             ? 'Download started. Check your Downloads. If the file does not appear, your phone browser may not support this document. Please try on a laptop.'
-            : 'Download started. Check your Downloads folder.');
+            : 'Download started. Check your Downloads folder.', button);
           setTimeout(() => URL.revokeObjectURL(documentUrl), 60000);
         } catch {
           URL.revokeObjectURL(documentUrl);
           const message = isPhone
             ? 'Your phone could not start this download. Please try again on a laptop.'
             : 'Your browser could not start this download. Please try another browser.';
-          showRecordDownloadStatus(message);
+          showRecordDownloadStatus(message, button);
           alert(message);
         } finally {
           setTimeout(() => {
@@ -3252,6 +3255,8 @@
     }
 
     let selectedRole = 'professor';
+    let pendingAuthRole = '';
+    let roleMismatchMessage = '';
     let demoInitialized = false;
     function showProfessorArea(area) { const builder = $('profBuilderPane'); const summary = $('profSummaryPane'); const results = $('profResults'); if (!builder || !summary || !results) return; if (area !== 'profBuilder') { $('professorQuizPreview')?.classList.add('hidden'); $('professorEditWorkspace')?.classList.add('hidden'); $('retakeWorkspace')?.classList.add('hidden'); $('professorForm')?.classList.remove('hidden'); builder.classList.remove('preview-mode'); currentPreviewQuizCode = null; currentPreviewQuizIndex = 0; currentEditingCode = null; currentRetakeCode = null; } if (area === 'profResults') { $('quizDoneCards')?.classList.toggle('hidden', Boolean(currentTeacherRankingCode)); $('quizStudentView')?.classList.add('hidden'); $('studentPaperView')?.classList.add('hidden'); renderQuizDoneCards(); } else { currentTeacherRankingCode = ''; $('teacherRankingView')?.classList.add('hidden'); } builder.classList.toggle('hidden', area !== 'profBuilder'); summary.classList.toggle('hidden', area !== 'profDashboard'); results.classList.toggle('hidden', area !== 'profResults'); }
     function setProfessorNavActive(area) { document.querySelectorAll('#professorNav .nav-btn').forEach(item => item.classList.toggle('active', item.dataset.area === area)); }
@@ -4095,11 +4100,13 @@
       const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
       const email = clean($('gateEmail').value);
       setBusy(button, true, 'Signing in');
+      pendingAuthRole = selectedRole;
       try {
         await signInWithEmailAndPassword(auth, email, $('gatePassword').value);
         clearGateAuthFields();
         $('gateMessage').textContent = '';
       } catch (error) {
+        pendingAuthRole = '';
         if (isConnectionError(error)) {
           $('gateMessage').textContent = 'Check your internet connection, then try logging in again.';
         } else if (['auth/invalid-credential', 'auth/wrong-password'].includes(error.code)) {
@@ -4117,6 +4124,7 @@
     $('gateSignUp').addEventListener('click', async event => {
       const button = event.currentTarget;
       setBusy(button, true, 'Creating account');
+      pendingAuthRole = selectedRole;
       try {
         const credential = await createUserWithEmailAndPassword(auth, clean($('gateEmail').value), $('gatePassword').value);
         await saveUserRole(credential.user, selectedRole);
@@ -4124,6 +4132,7 @@
         $('gateMessage').textContent = 'Account successfully created. You are now logged in.';
         window.alert('Account successfully created. You are now logged in.');
       } catch (error) {
+        pendingAuthRole = '';
         const messages = {
           'auth/email-already-in-use':'This email is already taken. Please log in or use another email.',
           'auth/operation-not-allowed':'Enable Email/Password in Firebase Authentication first.',
@@ -4155,6 +4164,8 @@
       if (signedIn) {
         currentTeacherEmail = user.email || user.uid || '';
         const profile = await loadUserProfile(user);
+        const savedRole = profile.role || cachedUserRole(user);
+        const requestedRole = pendingAuthRole || savedRole || selectedRole;
         submissionListeners.forEach(unsubscribe => unsubscribe());
         studentSubmissionListeners.forEach(unsubscribe => unsubscribe());
         messageListeners.forEach(unsubscribe => unsubscribe());
@@ -4173,13 +4184,14 @@
         currentCommentSubmission = null;
         studentTeacherCodeFilter = '';
         currentStudent = null;
-        selectedRole = profile.role || selectedRole;
+        selectedRole = requestedRole;
         currentTeacherCode = normalizeTeacherCode(profile.teacherCode || profile.teacherId || '');
         if (selectedRole !== 'professor') {
           currentTeacherCode = '';
         }
         if (profile.studentNumber) currentStudent = { ...profile };
-        if (!await validateSignedInRole(user)) return;
+        if (!await validateSignedInRole(user, requestedRole)) return;
+        pendingAuthRole = '';
       } else {
         currentTeacherEmail = '';
         currentTeacherCode = '';
@@ -4199,7 +4211,8 @@
         watchedMessageKey = '';
         watchedControlKey = '';
         clearGateAuthFields();
-        $('gateMessage').textContent = '';
+        $('gateMessage').textContent = roleMismatchMessage;
+        roleMismatchMessage = '';
       }
 
       $('appShell').classList.toggle('locked', !signedIn);
