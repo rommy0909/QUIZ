@@ -835,7 +835,31 @@
     }
     const DEMO_MODE = false;
     let state = { quizzes:[], submissions:[], drafts:[], records:[], messages:[] };
-    function saveLocalStudentSubmissions() {}
+    function localStudentSubmissionStorageKey() {
+      const identity = auth.currentUser?.uid || clean(currentStudent?.studentNumber);
+      return identity ? `quizlab-submissions-${identity}` : '';
+    }
+    function saveLocalStudentSubmissions(submissions = state.submissions) {
+      const key = localStudentSubmissionStorageKey();
+      if (!key) return;
+      try {
+        const owned = (submissions || []).filter(item => studentOwnsSubmission(item));
+        localStorage.setItem(key, JSON.stringify(dedupeSubmissionRecords(owned)));
+      } catch (error) {
+        console.warn('Local student submissions save skipped:', error.message);
+      }
+    }
+    function loadLocalStudentSubmissions() {
+      const key = localStudentSubmissionStorageKey();
+      if (!key) return [];
+      try {
+        const submissions = JSON.parse(localStorage.getItem(key) || '[]');
+        return Array.isArray(submissions) ? submissions.filter(item => studentOwnsSubmission(item)) : [];
+      } catch (error) {
+        console.warn('Local student submissions load skipped:', error.message);
+        return [];
+      }
+    }
     let currentStudent = null;
     let selectedStudentQuiz = null;
     let currentRetakeCode = null;
@@ -1415,7 +1439,10 @@
       return [...new Map((items || []).map(item => [submissionRecordKey(item), item])).values()];
     }
     function getStudentSubmissions() {
-      return dedupeSubmissionRecords(state.submissions.filter(item => studentOwnsSubmission(item)));
+      return dedupeSubmissionRecords([
+        ...state.submissions.filter(item => studentOwnsSubmission(item)),
+        ...loadLocalStudentSubmissions()
+      ]);
     }
     async function loadFirebaseSubmissionsForCodes(codes) {
       try {
@@ -1627,12 +1654,17 @@
       const itemCode = clean(item?.classCode).toUpperCase();
       const quiz = state.quizzes.find(candidate => clean(candidate.classCode).toUpperCase() === itemCode)
         || state.quizzes.find(candidate => clean(candidate.title).toUpperCase() === clean(item?.title || item?.subject).toUpperCase());
-      const storedNumber = item?.quizNumber || item?.quizNo || item?.quizNumberDisplay || currentStudent?.quizNumber || selectedStudentQuiz?.quizNumber || quiz?.quizNumber || quiz?.quizNo;
+      const storedNumber = item?.quizNumber || item?.quizNo || item?.quizNumberDisplay || quiz?.quizNumber || quiz?.quizNo;
       if (Number.isInteger(Number(storedNumber)) && Number(storedNumber) > 0) return String(Number(storedNumber));
-      const code = clean(item?.classCode || quiz?.classCode).toUpperCase();
-      const codes = [...new Set(state.quizzes.map(candidate => clean(candidate.classCode).toUpperCase()).filter(Boolean))];
-      const index = codes.indexOf(code);
-      return index >= 0 ? String(index + 1) : 'Not set';
+      return clean(storedNumber) || 'Not set';
+    }
+    function updateQuizCardNumbers(container, quizzes) {
+      container?.querySelectorAll('.dashboard-quiz-card h3').forEach((heading, index) => {
+        const quiz = quizzes[index];
+        if (!quiz) return;
+        const title = heading.textContent.split(' · ').slice(1).join(' · ').trim() || formatSubject(quiz.title);
+        heading.textContent = `Quiz ${displayQuizNumber(quiz)} · ${title}`;
+      });
     }
     function activeTeacherCode() { return ''; }
     function syncQuizTeacherCodes() {
@@ -1884,7 +1916,7 @@
           <button class="btn primary save-quiz-edit" data-code="${escapeHtml(quiz.classCode)}" type="button">Save quiz changes</button>
         </div>
       </article>
-    `).join('') : 'No quizzes created yet.'; renderDashboardStudentComments(); }
+    `).join('') : 'No quizzes created yet.'; updateQuizCardNumbers($('professorQuizCards'), groups); renderDashboardStudentComments(); }
     function renderProfessorDashboardWithDrafts() {
       const draftGroups = state.drafts.map(item => ({
         ...item,
@@ -1930,7 +1962,7 @@
       );
       $('studentAvailableCards').innerHTML = groups.length
         ? groups.map((quiz,index) => {
-          const alreadyTaken = Boolean(state.submissions.some(item => item.classCode === quiz.classCode && (item.studentUid ? item.studentUid === auth.currentUser?.uid : (knownStudentNumber() && item.studentNumber === knownStudentNumber()))));
+          const alreadyTaken = hasExistingQuizRecord(quiz.classCode);
           const action = alreadyTaken
             ? '<div class="join-notice">Unavailable, you already took this quiz.</div>'
             : '<div class="join-notice">Good luck, I believe in you.</div><div class="toolbar"><button class="btn primary join-quiz" data-code="' + escapeHtml(quiz.classCode) + '" type="button">Join quiz</button></div>';
@@ -1942,6 +1974,7 @@
           : 'Quiz code not found.';
 
       document.querySelectorAll('#studentAvailableCards .live-remaining').forEach((item,index) => item.dataset.endAt = groups[index]?.endAt || '');
+      updateQuizCardNumbers($('studentAvailableCards'), groups);
       updateCardCountdowns();
       renderStudentAvailableComments();
     }
@@ -2146,7 +2179,7 @@
     }
     function hasExistingQuizRecord(code, studentNumber = '') {
       const studentUid = auth.currentUser?.uid || '';
-      return state.submissions.some(item => item.classCode === code && (
+      return [...state.submissions, ...loadLocalStudentSubmissions()].some(item => item.classCode === code && (
         (studentUid && (item.studentUid === studentUid || (!item.studentUid && studentNumber && item.studentNumber === studentNumber))) ||
         (!studentUid && studentNumber && item.studentNumber === studentNumber)
       ));
@@ -2553,9 +2586,57 @@
       renderStudentLeaderboard(state.submissions, submission.classCode);
       $('studentScorePage').scrollIntoView({ behavior:'smooth', block:'start' });
     }
-    async function submitStudentQuiz(force = false) { if (!currentStudent || currentStudent.submissionInProgress) return; syncCurrentStudentAnswerFromDom(); const currentUid = auth.currentUser?.uid || ''; const existingSubmission = state.submissions.find(item => (item.studentUid === currentUid || item.studentNumber === currentStudent.studentNumber) && item.classCode === currentStudent.classCode); if (existingSubmission) { alert('Unavailable, you already took this quiz.'); return; } if (!force && !window.confirm('Are you sure you want to submit all your answers now? You cannot change them after submitting.')) return; currentStudent.submissionInProgress = true; const quizzes = uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === currentStudent.classCode).map(normalizeQuiz)); const savedAnswers = getStudentAnswerMap(); let score = 0; const answers = []; quizzes.forEach((quiz,index) => { const selected = clean(savedAnswers[index] ?? ''); const normalizedSelected = normalizeAnswer(selected); const normalizedCorrect = normalizeAnswer(quiz.answer); answers.push({ question:quiz.question, answer:selected, correctAnswer:quiz.answer }); if (normalizedSelected && normalizedCorrect && normalizedSelected === normalizedCorrect) score++; else if (answerMatchesStudentResponse(quiz.answer, selected)) score++; }); const passed = score >= Math.ceil(quizzes.length / 2); const submission = { ...currentStudent, studentUid:currentUid, quizOwnerUid:quizzes[0]?.ownerUid || '', teacherName:quizzes[0]?.teacherName || 'Teacher', subject:quizzes[0]?.title || currentStudent.classCode, title:quizzes[0]?.title || currentStudent.classCode, score, total:quizzes.length, resultMessage:passed ? 'Excellent work. Your effort paid off. Be proud of what you achieved!' : 'You did your best, and that matters. Review, learn, and come back stronger.', answers, submittedAt:new Date().toISOString() }; await saveStudentProfile(currentStudent); await firebaseWrite('submissions', submission); state.submissions.push(submission); saveLocalStudentSubmissions(state.submissions); clearInterval(timerHandle); renderScorePage(submission); renderStudentRecords(); renderStudentAvailable(); }
+    async function submitStudentQuiz(force = false) {
+      if (!currentStudent || currentStudent.submissionInProgress) return;
+      syncCurrentStudentAnswerFromDom();
+      const currentUid = auth.currentUser?.uid || '';
+      const existingSubmission = getStudentSubmissions().find(item => item.classCode === currentStudent.classCode);
+      if (existingSubmission) {
+        alert('Unavailable, you already took this quiz.');
+        return;
+      }
+      if (!force && !window.confirm('Are you sure you want to submit all your answers now? You cannot change them after submitting.')) return;
+      currentStudent.submissionInProgress = true;
+      const quizzes = uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === currentStudent.classCode).map(normalizeQuiz));
+      const savedAnswers = getStudentAnswerMap();
+      let score = 0;
+      const answers = [];
+      quizzes.forEach((quiz,index) => {
+        const selected = clean(savedAnswers[index] ?? '');
+        const normalizedSelected = normalizeAnswer(selected);
+        const normalizedCorrect = normalizeAnswer(quiz.answer);
+        answers.push({ question:quiz.question, answer:selected, correctAnswer:quiz.answer });
+        if (normalizedSelected && normalizedCorrect && normalizedSelected === normalizedCorrect) score++;
+        else if (answerMatchesStudentResponse(quiz.answer, selected)) score++;
+      });
+      const passed = score >= Math.ceil(quizzes.length / 2);
+      const submission = {
+        ...currentStudent,
+        studentUid:currentUid,
+        quizOwnerUid:quizzes[0]?.ownerUid || '',
+        teacherName:quizzes[0]?.teacherName || 'Teacher',
+        subject:quizzes[0]?.title || currentStudent.classCode,
+        title:quizzes[0]?.title || currentStudent.classCode,
+        quizNumber:quizzes[0]?.quizNumber || quizzes[0]?.quizNo || currentStudent.quizNumber || null,
+        score,
+        total:quizzes.length,
+        timedOut:Boolean(force),
+        resultMessage:passed ? 'Excellent work. Your effort paid off. Be proud of what you achieved!' : 'You did your best, and that matters. Review, learn, and come back stronger.',
+        answers,
+        submittedAt:new Date().toISOString()
+      };
+      state.submissions = dedupeSubmissionRecords([...state.submissions, submission]);
+      saveLocalStudentSubmissions();
+      saveStudentProfile(currentStudent).catch(error => console.warn('Student profile save skipped during submission:', error.message));
+      firebaseWrite('submissions', submission);
+      clearInterval(timerHandle);
+      renderScorePage(submission);
+      renderStudentRecords();
+      renderStudentAvailable();
+    }
 
     let questionDrafts = [];
+    let questionDraftsExplicitlyCleared = false;
     let editingReviewIndex = null;
     let quizBuilderHistoryGuardActive = false;
     let currentEditingCode = null;
@@ -2908,6 +2989,17 @@
       if (input) input.value = '';
     }
 
+    function syncKeyAnswerDraftsFromInput(input = $('keyAnswerPaste')) {
+      if (!input) return [];
+      const answers = input.value.replace(/\r/g, '').split('\n').map(normalizePastedAnswerLine).filter(Boolean);
+      questionDrafts = questionDrafts.map((item, index) => ({
+        ...item,
+        answer: answers[index] || '',
+        answerLetter: ''
+      }));
+      return answers;
+    }
+
     function renderKeyAnswerSection() {
       const list = $('keyAnswerList');
       if (!list) return;
@@ -2917,7 +3009,7 @@
         return;
       }
 
-      const prefilledAnswers = questionDrafts.filter(item => clean(item.answer)).map(item => normalizePastedAnswerLine(item.answer)).join('\n');
+      const prefilledAnswers = questionDrafts.map(item => normalizePastedAnswerLine(item.answer || '')).join('\n');
       list.innerHTML = `
         <div class="editor-question-card">
           <div class="editor-question-head">
@@ -2934,12 +3026,7 @@
       `;
 
       $('keyAnswerPaste')?.addEventListener('input', () => {
-        const input = $('keyAnswerPaste');
-        if (!input) return;
-        const hasContent = input.value.replace(/\r/g, '').split(/\n/).some(line => normalizePastedAnswerLine(line));
-        if (!hasContent) {
-          questionDrafts = questionDrafts.map(item => ({ ...item, answer: '', answerLetter: '' }));
-        }
+        syncKeyAnswerDraftsFromInput();
       });
 
       $('questionBuilderFields').classList.add('hidden');
@@ -3062,6 +3149,7 @@
       target.setRangeText(`${needsSeparator ? '\n' : ''}${pastedText}`, start, end, 'end');
       const cursorPosition = before.length + (needsSeparator ? 1 : 0) + pastedText.length;
       target.setSelectionRange(cursorPosition, cursorPosition);
+      target.dispatchEvent(new Event('input', { bubbles:true }));
     }
 
     function lockTextareaScrollDuringTouchSelection(textarea) {
@@ -3093,7 +3181,7 @@
 
     function saveQuestionKeyAnswers() {
       const list = $('keyAnswerList');
-      if (!questionDrafts.length && currentEditingCode) {
+      if (!questionDrafts.length && currentEditingCode && !questionDraftsExplicitlyCleared) {
         questionDrafts = state.quizzes.filter(item => item.classCode === currentEditingCode).map(item => ({ ...item }));
       }
       if (!list || !questionDrafts.length) {
@@ -3113,9 +3201,7 @@
       hideProfessorNotice();
 
       const answerTextarea = $('keyAnswerPaste');
-      const pastedAnswers = answerTextarea
-        ? answerTextarea.value.replace(/\r/g, '').split(/\n/).map(line => normalizePastedAnswerLine(line)).filter(Boolean)
-        : [];
+      const pastedAnswers = syncKeyAnswerDraftsFromInput(answerTextarea);
 
       if (pastedAnswers.length !== questionDrafts.length) {
         const difference = pastedAnswers.length < questionDrafts.length ? `${questionDrafts.length - pastedAnswers.length} answer${questionDrafts.length - pastedAnswers.length === 1 ? '' : 's'} missing` : `${pastedAnswers.length - questionDrafts.length} extra answer${pastedAnswers.length - questionDrafts.length === 1 ? '' : 's'}`;
@@ -3233,6 +3319,7 @@
         saveLocal();
 
         questionDrafts = [];
+        questionDraftsExplicitlyCleared = false;
         quizBuilderHistoryGuardActive = false;
         renderQuestionBatchList();
         renderFinalReviewList();
@@ -3389,6 +3476,7 @@
       setProfessorNavActive('profBuilder');
       showBuilderEditor(true);
       currentEditingCode = code;
+      questionDraftsExplicitlyCleared = false;
 
       const first = questions[0];
       $('classCode').value = first.classCode || code;
@@ -3437,6 +3525,7 @@
       currentEditingCode = null;
       toggleSaveChangesButtons();
       questionDrafts = [];
+      questionDraftsExplicitlyCleared = false;
     }
     function showAllEditQuestions() {
       collectEditorQuestions();
@@ -3453,6 +3542,7 @@
     }
     function clearQuizBuilderDraft() {
       questionDrafts = [];
+      questionDraftsExplicitlyCleared = false;
       editingReviewIndex = null;
       $('professorForm')?.reset();
       $('quizSetupFields')?.classList.remove('hidden');
@@ -3507,7 +3597,7 @@
     async function saveEditedQuiz(keepEditorOpen = false) {
       if (quizSaveInProgress) return;
       quizSaveInProgress = true;
-      if (!questionDrafts.length && currentEditingCode) {
+      if (!questionDrafts.length && currentEditingCode && !questionDraftsExplicitlyCleared) {
         questionDrafts = state.quizzes.filter(item => item.classCode === currentEditingCode).map(item => ({ ...item }));
       }
       collectEditorQuestions();
@@ -3575,6 +3665,7 @@
       }
 
       questionDrafts = [];
+      questionDraftsExplicitlyCleared = false;
       currentEditingCode = null;
       $('professorForm').reset();
       $('quizSetupFields').classList.remove('hidden');
@@ -3752,6 +3843,7 @@
         const index = Number(remove.dataset.index);
         if (!window.confirm('Do you want to delete this question and its answer?')) return;
         collectEditorQuestions();
+        questionDraftsExplicitlyCleared = true;
         questionDrafts.splice(index, 1);
         renderEditorQuestions(questionDrafts);
         $('editQuestionCount').textContent = `${questionDrafts.length} question${questionDrafts.length === 1 ? '' : 's'}`;
@@ -3916,6 +4008,7 @@
       if (!shouldClear) return;
       $('questionPasteInput').value = '';
       questionDrafts = [];
+      questionDraftsExplicitlyCleared = true;
       renderQuestionBatchList();
     });
     $('proceedToKeyAnswers')?.addEventListener('click', renderKeyAnswerSection);
@@ -3925,11 +4018,8 @@
         return;
       }
       if (!event.target.closest('#pasteKeyAnswersAgain')) return;
-      const input = $('keyAnswerPaste');
-      if (!input) return;
-      input.value = '';
-      questionDrafts = questionDrafts.map(item => ({ ...item, answer: '', answerLetter: '' }));
-      input.focus();
+      clearKeyAnswerDrafts();
+      $('keyAnswerPaste')?.focus();
     });
     $('backToQuestionBuilder')?.addEventListener('click', () => {
       $('keyAnswerSection').classList.add('hidden');
@@ -3944,7 +4034,7 @@
       renderKeyAnswerSection();
     });
     $('publishFinalQuiz')?.addEventListener('click', publishFinalQuiz);
-    $('questionBatchList')?.addEventListener('click', event => { const remove = event.target.closest('.remove-draft-question'); if (!remove) return; const index = Number(remove.dataset.index); if (!window.confirm('Do you want to remove this question and its answer?')) return; questionDrafts.splice(index, 1); renderQuestionBatchList(); const keyAnswerPaste = $('keyAnswerPaste'); if (keyAnswerPaste) keyAnswerPaste.value = questionDrafts.map(item => item.answer || '').join('\n'); });
+    $('questionBatchList')?.addEventListener('click', event => { const remove = event.target.closest('.remove-draft-question'); if (!remove) return; const index = Number(remove.dataset.index); if (!window.confirm('Do you want to remove this question and its answer?')) return; questionDraftsExplicitlyCleared = true; questionDrafts.splice(index, 1); renderQuestionBatchList(); const keyAnswerPaste = $('keyAnswerPaste'); if (keyAnswerPaste) keyAnswerPaste.value = questionDrafts.map(item => item.answer || '').join('\n'); });
     $('finalQuizReviewList')?.addEventListener('click', event => {
       const edit = event.target.closest('[data-review-edit]');
       const remove = event.target.closest('[data-review-remove]');
@@ -3969,6 +4059,7 @@
       if (remove) {
         const index = Number(remove.dataset.reviewRemove);
         if (!window.confirm('Do you want to remove this question and its answer from the quiz?')) return;
+        questionDraftsExplicitlyCleared = true;
         questionDrafts.splice(index, 1);
         editingReviewIndex = null;
         renderFinalReviewList();
