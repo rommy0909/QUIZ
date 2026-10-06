@@ -109,6 +109,7 @@
     .question-number-tag { font:700 22px 'Space Grotesk'; color:var(--orange); margin:6px 0 0; }
     .question-actions { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-top:18px; }
     .question-actions .btn { flex:1; }
+    .student-prev:disabled { cursor:not-allowed; }
     .quiz-motivation { display:flex; align-items:center; gap:12px; margin-top:14px; padding:13px 15px; border:1px solid #d9958f; border-radius:14px; background:linear-gradient(145deg,#3b202f,#2b1b29 68%,#233a34); color:#f6d8da; box-shadow:0 8px 18px #12070b35; }
     .quiz-motivation-bear { display:grid; place-items:center; flex:0 0 38px; width:38px; height:38px; border:1px solid #d9958f; border-radius:50%; background:#f3c1aa; box-shadow:0 4px 0 #a85f60,0 6px 12px #12070b55; font-size:22px; }
     .quiz-motivation-copy { margin:0; font-size:12px; line-height:1.55; }
@@ -161,6 +162,8 @@
     .choice:hover { border-color:var(--teal); background:#173d36; transform:translateY(-1px); box-shadow:0 0 0 1px rgba(228,160,168,.08),0 0 18px rgba(228,160,168,.14),0 8px 18px rgba(22,117,98,.18); }
     .choice:active { transform:translateY(0) scale(.99); }
     .choice input { width:auto; margin-right:8px; }
+    .choice:has(input[type="radio"]:checked) { border-color:var(--teal); background:#173d36; box-shadow:inset 0 0 0 1px var(--teal),0 0 14px rgba(228,160,168,.16); }
+    .choice input[type="radio"] { width:18px; height:18px; padding:0; accent-color:var(--orange); vertical-align:middle; }
     .result { border-radius:8px; padding:10px 13px; margin-top:12px; font-size:13px; display:none; }
     .result.show { display:block; }
     .result.correct { background:var(--green); color:#176240; }
@@ -951,7 +954,7 @@
         .replace(/^(?:answer|correct\s+answer|key\s+answer)\s*[:\-]?\s*/i, '')
         .replace(/^(?:[Qq]\s*[-:]?\s*)?(?:\d+|[A-Da-d])\s*[\.)]\s*/g, '')
         .replace(/^(?:[Qq]\s*[-:]?\s*)?(?:\d+|[A-Da-d])\s*[:\-]\s*/gi, '')
-        .replace(/^(?:[Qq]\s*[-:]?\s*)?\d+\s*$/i, '')
+        .replace(/^Q\s*[-:]?\s*\d+\s*$/i, '')
         .trim();
     };
     const normalizeComparableText = value => {
@@ -971,7 +974,7 @@
         .replace(/\s+/g, ' ')
         .trim();
     };
-    const normalizeAnswer = value => normalizeComparableText(stripAnswerPrefix(value));
+    const normalizeAnswer = value => normalizeComparableText(stripAnswerPrefix(value)) || normalizeComparableText(value);
     const normalizePastedAnswerLine = value => stripAnswerPrefix(value).normalize('NFKC').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
     const escapeHtml = value => clean(value).replace(/[&<>'"]/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#039;','"':'&quot;'}[char]));
     const saveLocal = () => {};
@@ -2218,7 +2221,7 @@
       $('selectedStudentMeta').textContent = `${formatCourse(item.course)} · ${displayQuizNumber(item)} · Submitted ${formatDate(item.submittedAt)}`;
       $('selectedStudentScore').textContent = `${item.score}/${item.total}`;
       const answers = uniqueQuizQuestions(item.answers || []).map((answer,index) => {
-        const correct = answerMatchesStudentResponse(answer.correctAnswer, answer.answer);
+        const correct = answerMatchesStudentResponse(answer.correctAnswer, answer.answer, answer.type);
         return `<div class="paper-question"><div class="paper-question-label">Question ${index + 1}</div><strong class="paper-question-title">${escapeHtml(formatSentence(answer.question))}</strong><div class="paper-answer ${correct ? 'correct' : 'wrong'}"><b>Student answer:</b> ${escapeHtml(formatSentence(answer.answer)) || 'No answer'}<br><b>Correct answer:</b> ${escapeHtml(formatSentence(answer.correctAnswer))}</div></div>`;
       }).join('');
       $('studentPaper').innerHTML = answers || '<div class="empty">No answer record was saved for this submission.</div>';
@@ -2226,22 +2229,87 @@
 
     async function professorSubmit(event) { event.preventDefault(); const code = currentCode(); const type = $('quizType').value; const quiz = { classCode:code, title:clean($('quizTitle').value), description:clean($('quizDescription').value), duration:Number($('quizDuration')?.value) || 20, question:clean($('quizQuestion').value), answer:clean($('quizAnswer').value), type, choices:type === 'mcq' ? clean($('quizChoices').value).split(',').map(clean).filter(Boolean) : type === 'truefalse' ? ['True','False'] : [], ownerUid:auth.currentUser?.uid || '', teacherCode:currentTeacherCode, teacherName:fullTeacherName() }; state.quizzes.push(quiz); saveLocal(); await firebaseWrite('quizzes', quiz); $('quizQuestion').value=''; $('quizAnswer').value=''; $('quizChoices').value=''; $('questionBuilderFields').classList.add('hidden'); $('professorForm').reset(); renderProfessor(); }
     function getStudentAnswerMap() { return currentStudent?.answers || {}; }
+    function studentAnswerKey(quiz) {
+      return `question:${normalizeAnswer(quiz.question)}|${normalizeAnswer(quiz.answer)}`;
+    }
+    function studentAnswerFromMap(answerMap, quiz) {
+      const currentKey = studentAnswerKey(quiz);
+      const currentAnswer = answerMap?.[currentKey];
+      if (clean(currentAnswer)) return currentAnswer;
+      const legacyNormalize = value => normalizeComparableText(stripAnswerPrefix(value).replace(/^\d+\s*$/i, ''));
+      const legacyKey = `question:${legacyNormalize(quiz.question)}|${legacyNormalize(quiz.answer)}`;
+      return legacyKey === currentKey ? '' : answerMap?.[legacyKey] ?? '';
+    }
+    function restoreStudentAnswerMap(answerMap, quizzes) {
+      const restored = {};
+      quizzes.forEach(quiz => {
+        const key = studentAnswerKey(quiz);
+        const answer = studentAnswerFromMap(answerMap, quiz);
+        if (!clean(answer)) return;
+        const questionType = clean(quiz.type).toLowerCase();
+        if (['mcq','truefalse'].includes(questionType) && Array.isArray(quiz.choices) && quiz.choices.length) {
+          const selectedChoice = quiz.choices.find((choice, index) => studentChoiceIsSelected(answer, choice, index));
+          if (selectedChoice) restored[key] = selectedChoice;
+          return;
+        }
+        restored[key] = answer;
+      });
+      return restored;
+    }
+    function getStudentAnswer(quiz, index) {
+      const answers = getStudentAnswerMap();
+      const answer = studentAnswerFromMap(answers, quiz);
+      if (!clean(answer)) return '';
+      const questionType = clean(quiz.type).toLowerCase();
+      if (!['mcq','truefalse'].includes(questionType) || !Array.isArray(quiz.choices) || !quiz.choices.length) return answer;
+      const selectedIndex = quiz.choices.findIndex((choice, choiceIndex) => studentChoiceIsSelected(answer, choice, choiceIndex));
+      return selectedIndex < 0 ? '' : quiz.choices[selectedIndex];
+    }
+    function studentChoiceIsSelected(answer, choice, choiceIndex) {
+      const normalizedAnswer = normalizeAnswer(answer);
+      if (!normalizedAnswer) return false;
+      if (normalizedAnswer === normalizeAnswer(choice)) return true;
+      const legacyLetterIndex = /^[a-d]$/.test(normalizedAnswer) ? normalizedAnswer.charCodeAt(0) - 97 : -1;
+      return legacyLetterIndex === choiceIndex;
+    }
+    function setStudentAnswer(index, value) {
+      if (!currentStudent) return;
+      const keyIndex = Number(index);
+      if (!Number.isInteger(keyIndex) || keyIndex < 0) return;
+      const quizzes = uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === currentStudent.classCode).map(normalizeQuiz));
+      const quiz = quizzes[keyIndex];
+      if (!quiz) return;
+      const answers = { ...getStudentAnswerMap(), [studentAnswerKey(quiz)]:value };
+      delete answers[keyIndex];
+      saveStudentAnswerMap(answers);
+    }
     function syncCurrentStudentAnswerFromDom() {
       if (!currentStudent) return;
       const activeAnswer = $('studentQuizList')?.querySelector('input[type="radio"]:checked, .student-answer');
       if (!activeAnswer) return;
       const keyIndex = Number(activeAnswer.dataset.index ?? currentStudent.currentQuestionIndex);
-      currentStudent.answers = getStudentAnswerMap();
-      currentStudent.answers[keyIndex] = activeAnswer.matches('input[type="radio"]') ? formatChoice(activeAnswer.value) : activeAnswer.value;
-      saveStudentAnswerMap(currentStudent.answers);
+      setStudentAnswer(keyIndex, activeAnswer.matches('input[type="radio"]') ? formatChoice(activeAnswer.value) : activeAnswer.value);
     }
-    function saveStudentAnswerMap(map) { if (!currentStudent) return; currentStudent.answers = map; const user = auth.currentUser; if (user) setDoc(doc(db, 'quizSessions', `${user.uid}_${currentStudent.classCode}`), { studentUid:user.uid, classCode:currentStudent.classCode, studentNumber:currentStudent.studentNumber, answers:map, updatedAt:serverTimestamp() }, { merge:true }).catch(error => console.warn('Quiz session save skipped:', error.message)); }
+    function saveStudentAnswerMap(map) { if (!currentStudent) return; currentStudent.answers = map; const user = auth.currentUser; if (user) setDoc(doc(db, 'quizSessions', `${user.uid}_${currentStudent.classCode}`), { studentUid:user.uid, classCode:currentStudent.classCode, studentNumber:currentStudent.studentNumber, answerMapVersion:2, answers:{ ...map }, updatedAt:serverTimestamp() }, { merge:true }).catch(error => console.warn('Quiz session save skipped:', error.message)); }
     async function loadStudentAnswerMap(studentUid, classCode) { try { const snapshot = await getDoc(doc(db, 'quizSessions', `${studentUid}_${classCode}`)); return snapshot.exists() ? snapshot.data().answers || {} : {}; } catch (error) { return {}; } }
-    function uniqueQuizQuestions(items) { const seen = new Set(); return items.filter(item => { const key = `${normalizeAnswer(item.question)}|${normalizeAnswer(item.answer)}`; if (!key || seen.has(key)) return false; seen.add(key); return true; }); }
-    function answerMatchesStudentResponse(correctAnswer, studentAnswer) {
+    function uniqueQuizQuestions(items) {
+      const seen = new Set();
+      const unique = items.filter(item => {
+        const key = `${normalizeAnswer(item.question)}|${normalizeAnswer(item.answer)}`;
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      if (unique.length > 1 && unique.every(item => Number.isFinite(Number(item.order)) && Number(item.order) > 0)) {
+        return unique.sort((a,b) => Number(a.order) - Number(b.order));
+      }
+      return unique;
+    }
+    function answerMatchesStudentResponse(correctAnswer, studentAnswer, questionType = '') {
       const exactCorrect = normalizeAnswer(correctAnswer);
       const exactStudent = normalizeAnswer(studentAnswer);
       if (!exactCorrect || !exactStudent) return false;
+      if (['mcq','truefalse'].includes(clean(questionType).toLowerCase())) return exactCorrect === exactStudent;
       if (exactCorrect === exactStudent) return true;
       const compactCorrect = exactCorrect.replace(/\s/g, '');
       const compactStudent = exactStudent.replace(/\s/g, '');
@@ -2255,15 +2323,6 @@
 
       const options = splitAlternatives(correctAnswer);
       if (options.length > 1 && options.includes(compactStudent)) return true;
-
-      const correctParts = exactCorrect.split(' ');
-      const studentParts = exactStudent.split(' ');
-
-      if (correctParts.length && studentParts.length) {
-        const correctSet = new Set(correctParts.filter(Boolean));
-        const studentSet = new Set(studentParts.filter(Boolean));
-        if (correctSet.size && studentSet.size && [...correctSet].every(part => studentSet.has(part))) return true;
-      }
 
       return false;
     }
@@ -2284,7 +2343,7 @@
           type:quiz.type || ''
         };
       });
-      const score = answers.filter(answer => answerMatchesStudentResponse(answer.correctAnswer, answer.answer)).length;
+      const score = answers.filter(answer => answerMatchesStudentResponse(answer.correctAnswer, answer.answer, answer.type)).length;
       const total = quizQuestions.length;
       const passed = score >= Math.ceil(total / 2);
       return {
@@ -2369,8 +2428,8 @@
       const currentQuiz = quizzes[currentStudent.currentQuestionIndex];
       currentStudent.quizNumber = Number(currentQuiz.quizNumber || currentQuiz.quizNo) || currentStudent.quizNumber || null;
       $('studentClass').textContent = `${formatSubject(currentQuiz.title)} · ${currentStudent.classCode} · ${total} questions`;
-      const currentAnswer = currentStudent.answers[currentStudent.currentQuestionIndex] ?? '';
-      const answeredCount = quizzes.reduce((count, quiz, index) => count + (clean(currentStudent.answers[index] ?? '').length ? 1 : 0), 0);
+      const currentAnswer = getStudentAnswer(currentQuiz, currentStudent.currentQuestionIndex);
+      const answeredCount = getStudentAnsweredCount(quizzes);
       const questionType = clean(currentQuiz.type).toLowerCase();
       const hasChoices = Array.isArray(currentQuiz.choices) && currentQuiz.choices.length > 0;
       const isChoiceQuestion = (questionType === 'mcq' || questionType === 'truefalse') && hasChoices;
@@ -2379,7 +2438,7 @@
         ? `<input class="student-answer" data-index="${currentStudent.currentQuestionIndex}" type="text" placeholder="Type your answer" value="${escapeHtml(currentAnswer)}" autocomplete="off">`
         : `<textarea class="student-answer" data-index="${currentStudent.currentQuestionIndex}" placeholder="Type your answer" rows="5">${escapeHtml(formatSentence(currentAnswer))}</textarea>`;
       const choiceMarkup = isChoiceQuestion
-        ? (currentQuiz.choices || []).map(choice => `<label class="choice"><input type="radio" name="q${currentStudent.currentQuestionIndex}" value="${escapeHtml(choice)}" ${normalizeAnswer(currentAnswer) === normalizeAnswer(choice) ? 'checked' : ''}>${escapeHtml(formatChoice(choice))}</label>`).join('')
+        ? (currentQuiz.choices || []).map((choice, index) => `<label class="choice"><input type="radio" data-index="${currentStudent.currentQuestionIndex}" name="q${currentStudent.currentQuestionIndex}" value="${escapeHtml(choice)}" ${studentChoiceIsSelected(currentAnswer, choice, index) ? 'checked' : ''}>${escapeHtml(formatChoice(choice))}</label>`).join('')
         : answerMarkup;
       $('studentQuizList').innerHTML = `
         <div class="question-card">
@@ -2406,7 +2465,8 @@
       currentStudent.timerEndAt = endTime || currentStudent.timerEndAt || Date.now() + (Number(quizzes[0]?.duration) || 20) * 60000;
       startTimer(currentStudent.timerEndAt);
     }
-    function updateProgress() { const quizzes = currentStudent ? uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === currentStudent.classCode).map(normalizeQuiz)) : []; const answers = getStudentAnswerMap(); const total = quizzes.length; const answered = quizzes.reduce((count, quiz, index) => count + (clean(answers[index] ?? '').length ? 1 : 0), 0); $('studentProgress').textContent = `${answered} / ${total} answered`; $('progressBar').style.width = total ? `${answered / total * 100}%` : '0%'; }
+    function getStudentAnsweredCount(quizzes) { return quizzes.reduce((count, quiz, index) => count + (clean(getStudentAnswer(quiz, index)).length ? 1 : 0), 0); }
+    function updateProgress() { const quizzes = currentStudent ? uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === currentStudent.classCode).map(normalizeQuiz)) : []; const total = quizzes.length; const answered = getStudentAnsweredCount(quizzes); $('studentProgress').textContent = `${answered} / ${total} answered`; $('progressBar').style.width = total ? `${answered / total * 100}%` : '0%'; const questionBadge = $('studentQuizList')?.querySelector('.question-card-head .tag'); if (questionBadge) questionBadge.textContent = `${answered} answered`; }
     function getBestSubmissionPerStudent(submissions) {
       const bestByStudent = new Map();
       submissions.forEach(item => {
@@ -2572,10 +2632,10 @@
       $('scoreCircleConfetti').innerHTML = Array.from({ length:20 }, (_, index) => `<i style="left:${[4,12,20,30,40,50,60,70,80,90][index % 10]}%;background:${['#e4a0a8','#e7b07a','#4eaa7d','#f6d8da'][index % 4]};animation-delay:${(index % 10) * .12}s"></i>`).join('');
       $('scoreValue').textContent = submission.score;
       $('scoreTotal').textContent = `/ ${submission.total}`;
-      const correctAnswers = submission.answers.filter(answer => answerMatchesStudentResponse(answer.correctAnswer, answer.answer)).length;
+      const correctAnswers = submission.answers.filter(answer => answerMatchesStudentResponse(answer.correctAnswer, answer.answer, answer.type)).length;
       $('scoreValue').closest('.score-circle')?.style.setProperty('--correct-percent', submission.total ? (correctAnswers / submission.total * 100).toFixed(2) : '0');
       $('scoreReviewList').innerHTML = submission.answers.map((answer, index) => {
-        const correct = answerMatchesStudentResponse(answer.correctAnswer, answer.answer);
+        const correct = answerMatchesStudentResponse(answer.correctAnswer, answer.answer, answer.type);
         return `<div class="review-item"><strong>${index + 1}. ${escapeHtml(formatSentence(answer.question))}</strong><div class="review-answer-line ${correct ? 'correct' : 'wrong'}"><b>Your answer:</b> ${escapeHtml(formatSentence(answer.answer)) || 'No answer'}${correct ? '' : `<br><b>Correct answer:</b> ${escapeHtml(formatSentence(answer.correctAnswer))}`}</div></div>`;
       }).join('');
       $('studentRoom').classList.add('hidden');
@@ -2598,16 +2658,12 @@
       if (!force && !window.confirm('Are you sure you want to submit all your answers now? You cannot change them after submitting.')) return;
       currentStudent.submissionInProgress = true;
       const quizzes = uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === currentStudent.classCode).map(normalizeQuiz));
-      const savedAnswers = getStudentAnswerMap();
       let score = 0;
       const answers = [];
       quizzes.forEach((quiz,index) => {
-        const selected = clean(savedAnswers[index] ?? '');
-        const normalizedSelected = normalizeAnswer(selected);
-        const normalizedCorrect = normalizeAnswer(quiz.answer);
-        answers.push({ question:quiz.question, answer:selected, correctAnswer:quiz.answer });
-        if (normalizedSelected && normalizedCorrect && normalizedSelected === normalizedCorrect) score++;
-        else if (answerMatchesStudentResponse(quiz.answer, selected)) score++;
+        const selected = clean(getStudentAnswer(quiz, index));
+        answers.push({ question:quiz.question, answer:selected, correctAnswer:quiz.answer, type:quiz.type || '' });
+        if (answerMatchesStudentResponse(quiz.answer, selected, quiz.type)) score++;
       });
       const passed = score >= Math.ceil(quizzes.length / 2);
       const submission = {
@@ -4123,7 +4179,48 @@
     $('backToStudentList')?.addEventListener('click', () => { $('studentPaperView').classList.add('hidden'); $('quizStudentView').classList.remove('hidden'); });
     $('studentForm').addEventListener('submit', event => { $('joinCode').value = formatQuizNumber($('joinCode').value); $('studentName').value = formatPersonName($('studentName').value); $('studentInitial').value = formatPersonName($('studentInitial').value); $('studentSurname').value = formatPersonName($('studentSurname').value); $('studentCourse').value = formatCourse($('studentCourse').value); $('studentYear').value = formatYear($('studentYear').value); }, true);
     $('studentForm').addEventListener('submit', event => { const code = clean($('joinCode').value).toUpperCase(); const fullName = `${clean($('studentName').value)} ${clean($('studentInitial').value)} ${clean($('studentSurname').value)}`; const studentNumber = `${fullName}-${code}`; if (!hasExistingQuizRecord(code, studentNumber)) return; event.preventDefault(); event.stopImmediatePropagation(); showUnavailableQuizNotice(); renderStudentAvailable(); }, true);
-    $('studentForm').addEventListener('submit', async event => { event.preventDefault(); const code = clean($('joinCode').value).toUpperCase(); const localQuestions = state.quizzes.filter(item => item.classCode === code); const remote = await loadFirebaseQuizzes(code); const control = await loadFirebaseControl(code); if (remote.length) { state.quizzes = [...state.quizzes.filter(item => item.classCode !== code), ...remote.map(item => { const local = localQuestions.find(candidate => candidate.question === item.question); return { ...item, forceOngoing:local?.forceOngoing || item.forceOngoing || selectedStudentQuiz?.forceOngoing || false, status:local?.status || control?.status || item.status || 'not-set' }; })]; saveLocal(); } const available = state.quizzes.filter(item => item.classCode === code && (normalizeQuiz(item).status === 'ongoing' || (selectedStudentQuiz?.classCode === code && selectedStudentQuiz.forceOngoing))); if (!available.length) { alert('This quiz is not started yet or has already ended.'); return; } const fullName = `${clean($('studentName').value)} ${clean($('studentInitial').value)} ${clean($('studentSurname').value)}`; const studentNumber = `${fullName}-${code}`; const studentProfile = { studentName:fullName, studentNumber, course:`${clean($('studentCourse').value)} ${clean($('studentYear').value)}` }; saveStudentProfile(studentProfile); const existingSubmission = state.submissions.find(item => item.classCode === code && item.studentNumber === studentNumber); if (existingSubmission) { $('studentJoinTitle').textContent = 'Quiz unavailable'; $('studentJoinMeta').textContent = 'Unavailable, you already took this quiz.'; renderStudentAvailable(); $('studentJoin').scrollIntoView({ behavior:'smooth', block:'start' }); return; } currentStudent = { ...studentProfile, classCode:code, currentQuestionIndex:0 }; selectedStudentQuiz = null; saveStudentProfile(currentStudent); $('studentJoin').classList.add('hidden'); $('studentRoom').classList.remove('hidden'); $('studentGreeting').textContent = `Hi, ${currentStudent.studentName}.`; $('studentClass').textContent = `${available[0].title} · ${code} · ${available.length} questions`; renderStudentRoom(); renderStudentRecords(); });
+    $('studentForm').addEventListener('submit', async event => {
+      event.preventDefault();
+      const code = clean($('joinCode').value).toUpperCase();
+      const localQuestions = state.quizzes.filter(item => item.classCode === code);
+      const remote = await loadFirebaseQuizzes(code);
+      const control = await loadFirebaseControl(code);
+      if (remote.length) {
+        state.quizzes = [...state.quizzes.filter(item => item.classCode !== code), ...remote.map(item => {
+          const local = localQuestions.find(candidate => candidate.question === item.question);
+          return { ...item, forceOngoing:local?.forceOngoing || item.forceOngoing || selectedStudentQuiz?.forceOngoing || false, status:local?.status || control?.status || item.status || 'not-set' };
+        })];
+        saveLocal();
+      }
+      const available = state.quizzes.filter(item => item.classCode === code && (normalizeQuiz(item).status === 'ongoing' || (selectedStudentQuiz?.classCode === code && selectedStudentQuiz.forceOngoing)));
+      if (!available.length) {
+        alert('This quiz is not started yet or has already ended.');
+        return;
+      }
+      const fullName = `${clean($('studentName').value)} ${clean($('studentInitial').value)} ${clean($('studentSurname').value)}`;
+      const studentNumber = `${fullName}-${code}`;
+      const studentProfile = { studentName:fullName, studentNumber, course:`${clean($('studentCourse').value)} ${clean($('studentYear').value)}` };
+      saveStudentProfile(studentProfile);
+      const existingSubmission = state.submissions.find(item => item.classCode === code && item.studentNumber === studentNumber);
+      if (existingSubmission) {
+        $('studentJoinTitle').textContent = 'Quiz unavailable';
+        $('studentJoinMeta').textContent = 'Unavailable, you already took this quiz.';
+        renderStudentAvailable();
+        $('studentJoin').scrollIntoView({ behavior:'smooth', block:'start' });
+        return;
+      }
+      const savedAnswers = auth.currentUser?.uid ? await loadStudentAnswerMap(auth.currentUser.uid, code) : {};
+      const quizQuestions = uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === code).map(normalizeQuiz));
+      currentStudent = { ...studentProfile, classCode:code, currentQuestionIndex:0, answers:restoreStudentAnswerMap(savedAnswers, quizQuestions) };
+      selectedStudentQuiz = null;
+      saveStudentProfile(currentStudent);
+      $('studentJoin').classList.add('hidden');
+      $('studentRoom').classList.remove('hidden');
+      $('studentGreeting').textContent = `Hi, ${currentStudent.studentName}.`;
+      $('studentClass').textContent = `${available[0].title} · ${code} · ${available.length} questions`;
+      renderStudentRoom();
+      renderStudentRecords();
+    });
     $('loadTeacherQuizzes')?.addEventListener('click', async event => {
       const button = event.currentTarget;
       setBusy(button, true, 'Searching');
@@ -4151,10 +4248,33 @@
         $('loadTeacherQuizzes')?.click();
       }
     });
-    $('studentQuizList').addEventListener('change', event => { const radio = event.target.closest('input[type="radio"]'); const textarea = event.target.closest('.student-answer'); if (radio || textarea) { const keyIndex = Number((radio || textarea).dataset.index ?? currentStudent.currentQuestionIndex); currentStudent.answers = getStudentAnswerMap(); currentStudent.answers[keyIndex] = radio ? formatChoice(radio.value) : formatSentence(textarea.value); saveStudentAnswerMap(currentStudent.answers); updateProgress(); } });
-    $('studentQuizList').addEventListener('input', event => { const textarea = event.target.closest('.student-answer'); if (textarea) { const keyIndex = Number(textarea.dataset.index ?? currentStudent.currentQuestionIndex); currentStudent.answers = getStudentAnswerMap(); currentStudent.answers[keyIndex] = textarea.value; saveStudentAnswerMap(currentStudent.answers); updateProgress(); } });
-    $('studentQuizList').addEventListener('blur', event => { const textarea = event.target.closest('.student-answer'); if (!textarea || !currentStudent) return; textarea.value = formatSentence(textarea.value); const keyIndex = Number(textarea.dataset.index ?? currentStudent.currentQuestionIndex); currentStudent.answers = getStudentAnswerMap(); currentStudent.answers[keyIndex] = textarea.value; saveStudentAnswerMap(currentStudent.answers); }, true);
-    $('studentQuizList').addEventListener('click', event => { const prev = event.target.closest('.student-prev'); const next = event.target.closest('.student-next'); if (prev && currentStudent && currentStudent.currentQuestionIndex > 0) { currentStudent.currentQuestionIndex -= 1; renderStudentRoom(false); } if (next && currentStudent) { const total = uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === currentStudent.classCode)).length; if (currentStudent.currentQuestionIndex < total - 1) { currentStudent.currentQuestionIndex += 1; renderStudentRoom(false); } else { submitStudentQuiz(); } } });
+    $('studentQuizList').addEventListener('change', event => { const radio = event.target.closest('input[type="radio"]'); const answerInput = event.target.closest('.student-answer'); if (radio || answerInput) { const keyIndex = Number((radio || answerInput).dataset.index ?? currentStudent.currentQuestionIndex); setStudentAnswer(keyIndex, radio ? formatChoice(radio.value) : formatSentence(answerInput.value)); updateProgress(); } });
+    $('studentQuizList').addEventListener('input', event => { const answerInput = event.target.closest('.student-answer'); if (answerInput) { const keyIndex = Number(answerInput.dataset.index ?? currentStudent.currentQuestionIndex); setStudentAnswer(keyIndex, answerInput.value); updateProgress(); } });
+    $('studentQuizList').addEventListener('blur', event => { const answerInput = event.target.closest('.student-answer'); if (!answerInput || !currentStudent) return; answerInput.value = formatSentence(answerInput.value); const keyIndex = Number(answerInput.dataset.index ?? currentStudent.currentQuestionIndex); setStudentAnswer(keyIndex, answerInput.value); }, true);
+    $('studentQuizList').addEventListener('click', event => {
+      const radio = event.target.closest('.choice input[type="radio"]');
+      const prev = event.target.closest('.student-prev');
+      const next = event.target.closest('.student-next');
+      if (radio && currentStudent) {
+        setStudentAnswer(radio.dataset.index, formatChoice(radio.value));
+        updateProgress();
+      }
+      if (!currentStudent || (!prev && !next)) return;
+      syncCurrentStudentAnswerFromDom();
+      if (prev && currentStudent.currentQuestionIndex > 0) {
+        currentStudent.currentQuestionIndex -= 1;
+        renderStudentRoom(false);
+      }
+      if (next) {
+        const total = uniqueQuizQuestions(state.quizzes.filter(item => item.classCode === currentStudent.classCode)).length;
+        if (currentStudent.currentQuestionIndex < total - 1) {
+          currentStudent.currentQuestionIndex += 1;
+          renderStudentRoom(false);
+        } else {
+          submitStudentQuiz();
+        }
+      }
+    });
     $('leaveRoom').addEventListener('click', () => { $('studentRoom').classList.add('hidden'); $('studentJoin').classList.remove('hidden'); });
     document.querySelectorAll('.password-toggle').forEach(button => button.addEventListener('click', () => {
       const input = $(button.dataset.passwordTarget);
